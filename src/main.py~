@@ -1,0 +1,171 @@
+from __future__ import division
+
+__author__ = 'igor'
+
+import json
+
+
+class Parser(object):
+    def __init__(self, countFile):
+        self.words = {}
+        # 0 - NONTERMINAL counts, 1 - UNARYRULES, 2 - BINARYRULES
+        self.rules = {0: {}, 1: {}, 2: {}}
+
+        inputFile = open(countFile)
+        if inputFile:
+            for line in inputFile:
+                parameters = line.strip().split()
+                count = int(parameters[0])
+                type = parameters[1]
+                others = parameters[2:]
+                if type == "UNARYRULE":
+                    word = others[1]
+                    prevCount = self.words.get(word, 0)
+                    self.words[word] = prevCount + count
+                    self.rules[1][(others[0], word)] = count
+                elif type == "BINARYRULE":
+                    self.rules[2][tuple(others)] = count
+                elif type == "NONTERMINAL":
+                    self.rules[0][others[0]] = count
+                else:
+                    print("error, type:", type)
+        else:
+            print "cannot open inputFile"
+
+    def qUnaryRule(self, X, word):
+        if self.isRare(word):
+            word = "_RARE_"
+        return (self.rules[1][(X, word)]) / (self.rules[0][X])
+
+    def unaryRuleExists(self, X, word):
+        val1 = self.rules[1].get((X, word))
+        val2 = self.rules[0].get(X)
+
+        if not val1 and self.isRare(word):
+            val1 = self.rules[1].get((X, "_RARE_"))
+
+
+        if val1 and val2:
+            return True
+        return False
+
+    def qBinaryRule(self, X, Y1, Y2):
+        return (self.rules[2][(X, Y1, Y2)]) / (self.rules[0][X])
+
+    def isRare(self, word):
+        if self.words.get(word, 0) < 5:
+            return True
+        return False
+
+    def argmax(self, ls):
+        if not ls:
+            return None, 0.0
+        return max(ls, key=lambda x: x[1])
+
+    def CKY(self, sentence):
+        print sentence
+        n = len(sentence)
+        x = [""] + sentence
+        N = self.rules[0].keys()
+
+        pi = {}
+        bp = {}
+
+        for i in range(1, n + 1):
+            for X in N:
+                if self.unaryRuleExists(X, x[i]):
+                    pi[i, i, X] = self.qUnaryRule(X, x[i])
+                    bp[i, i, X] = (X, x[i], i, i)
+
+
+        for l in range(1, n):
+            for i in range(1, n - l + 1):
+                j = i + l
+                for X in N:
+                    back, score = self.argmax([((X, Y, Z, i, s, j),
+                                                self.qBinaryRule(X, Y, Z)
+                                                * pi[i, s, Y] * pi[s + 1, j, Z])
+                                               for s in range(i, j)
+                                               for X, Y, Z in self.getRules(X)
+                                               if pi.get((i, s, Y), 0) > 0
+                                               if pi.get((s + 1, j, Z), 0) > 0
+                                               ])
+                    if score > 0.0:
+                        print back
+                        bp[i, j, X], pi[i, j, X] = back, score
+        print bp
+        print "pi"
+        print pi
+        print "asf"
+        if (1, n, "S") in pi:
+            tree = self.backtrace(bp[1, n, "S"], bp)
+            return tree
+
+    def backtrace(self, back, bp):
+        if not back: return None
+        if len(back) == 6:
+            print back
+            (X, Y, Z, i, s, j) = back
+            return [X, self.backtrace(bp[i, s, Y], bp),
+                    self.backtrace(bp[s + 1, j, Z], bp)]
+        else:
+            print back
+            (X, Y, i, i) = back
+            return [X, Y]
+
+    def getRules(self, N):
+        avaliableRules = []
+        for (X, Y, Z) in self.rules[2].keys():
+            if X == N:
+                avaliableRules.append((X, Y, Z))
+        return avaliableRules
+
+    def replaceRareInSentence(self, sentence):
+        newSentence = []
+        for word in sentence:
+            if self.isRare(word):
+                word = "_RARE_"
+            newSentence.append(word)
+
+        return newSentence
+
+    def parseFile(self, fileName):
+        file = open(fileName)
+        for l in file:
+            tree = self.CKY(self.replaceRareInSentence(l.strip().split()))
+            jTree = json.dumps(tree)
+            print jTree
+        file.close()
+
+
+def replaceRareInTree(tree, parser):
+    if len(tree) == 3:
+        replaceRareInTree(tree[1], parser)
+        replaceRareInTree(tree[2], parser)
+    elif len(tree) == 2:
+        if parser.isRare(tree[1]):
+            tree[1] = "_RARE_"
+
+
+def replaceRare(parser, file):
+    input = open(file)
+    if input:
+        for line in input:
+            tree = json.loads(line.strip())
+            replaceRareInTree(tree, parser)
+            print json.dumps(tree)
+
+
+def main():
+    # parser = Parser('data/cfg.counts')
+    # replaceRare(parser, 'data/parse_train.dat')
+
+    parser = Parser('newCount.counts')
+
+    # parser.parseFile('data/parse_dev.dat')
+    s = "chupakabra , take a note ."
+    tree = parser.CKY(s.strip().split())
+    print json.dumps(tree)
+
+
+main()
